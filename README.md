@@ -27,6 +27,7 @@ These nodes use a local PRXPixel runtime instead of the unreleased diffusers PRX
 - The transformer and clip are loaded separately.
 - Transformer single-file checkpoints can be generated locally and then loaded through ComfyUI model folders.
 - Text encoder and transformer loading are tied into ComfyUI model management so unload/reload works with Comfy's VRAM policy.
+- Hugging Face downloads are staged under `ComfyUI/models/prx_pixel_hf` so cache and temp files stay inside the Comfy model tree.
 
 ## Typical workflows
 
@@ -43,6 +44,12 @@ These nodes use a local PRXPixel runtime instead of the unreleased diffusers PRX
 3. Use `Load PRX Pixel model` to load that local transformer.
 4. Use `Load prx clip model only` for the text encoder.
 5. Feed both into `PRX Pixel Sampling`.
+
+The clip-only loader only downloads:
+
+- `model_index.json`
+- `tokenizer/*`
+- `text_encoder/*`
 
 ## Notes about the converter
 

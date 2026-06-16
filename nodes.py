@@ -10,6 +10,7 @@ import torch
 from torch import nn
 
 from .fp8_converter import convert_prxpixel_source_to_fp8_mixed_file, is_prxpixel_single_file
+from .hf_download import resolve_clip_model_directory
 from .prxpixel_runtime import (
     PRXPixelInference,
     load_prxpixel_clip_from_repo,
@@ -265,7 +266,11 @@ def _get_or_load_repo_model(
             return cached
 
     model_dir = resolve_model_directory(model_source, local_files_only=local_files_only)
-    loaded_model = load_prxpixel_model_from_repo(model_dir=model_dir, dtype=resolved_dtype)
+    loaded_model = load_prxpixel_model_from_repo(
+        model_dir=model_dir,
+        dtype=resolved_dtype,
+        device=model_device,
+    )
     loaded_model.preferred_device = model_device
     loaded_model.cache_key = key
 
@@ -293,7 +298,11 @@ def _get_or_load_single_file_model(
             cached.cache_key = key
             return cached
 
-    loaded_model = load_prxpixel_model_from_single_file(checkpoint_path=model_path, dtype=resolved_dtype)
+    loaded_model = load_prxpixel_model_from_single_file(
+        checkpoint_path=model_path,
+        dtype=resolved_dtype,
+        device=model_device,
+    )
     loaded_model.preferred_device = model_device
     loaded_model.cache_key = key
 
@@ -322,7 +331,7 @@ def _get_or_load_clip(
             cached.cache_key = key
             return cached
 
-    model_dir = resolve_model_directory(model_source, local_files_only=local_files_only)
+    model_dir = resolve_clip_model_directory(model_source, local_files_only=local_files_only)
     loaded_clip = load_prxpixel_clip_from_repo(model_dir=model_dir, dtype=resolved_dtype)
     loaded_clip.preferred_device = clip_device
     loaded_clip.cache_key = key

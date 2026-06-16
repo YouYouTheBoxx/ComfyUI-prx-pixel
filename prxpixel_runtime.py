@@ -7,12 +7,12 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from huggingface_hub import snapshot_download
 from safetensors import safe_open
 from torch import nn
 from transformers import AutoTokenizer
 
 from .fp8_converter import FP8_STORAGE_DTYPE, FP8_STORAGE_MAX, make_fp8_scale_key, read_prxpixel_single_file_metadata
+from .hf_download import resolve_clip_model_directory, resolve_transformer_model_directory
 
 try:
     import ftfy
@@ -462,24 +462,7 @@ def _read_json(path: str) -> dict[str, Any]:
 
 
 def resolve_model_directory(model_source: str, local_files_only: bool) -> str:
-    if os.path.isdir(model_source):
-        return model_source
-
-    allow_patterns = [
-        "model_index.json",
-        "scheduler/*",
-        "text_encoder/*",
-        "tokenizer/*",
-        "transformer/*",
-        "README.md",
-        "LICENSE",
-        "NOTICE",
-    ]
-    return snapshot_download(
-        repo_id=model_source,
-        allow_patterns=allow_patterns,
-        local_files_only=local_files_only,
-    )
+    return resolve_transformer_model_directory(model_source=model_source, local_files_only=local_files_only)
 
 
 def _model_named_tensors(module: nn.Module) -> dict[str, torch.Tensor]:
@@ -554,7 +537,7 @@ def load_sharded_safetensors_into_module(module: nn.Module, base_dir: str, index
                         raise RuntimeError(
                             f"Shape mismatch for {tensor_name}: expected {list(target.shape)}, got {list(tensor.shape)}."
                         )
-                    target.copy_(tensor.to(dtype=target.dtype))
+                    target.copy_(tensor.to(device=target.device, dtype=target.dtype))
                     missing.discard(tensor_name)
 
     if missing:
@@ -590,7 +573,7 @@ def load_single_file_safetensors_into_module(module: nn.Module, checkpoint_path:
                     raise RuntimeError(
                         f"Shape mismatch for {tensor_name}: expected {list(target.shape)}, got {list(tensor.shape)}."
                     )
-                target.copy_(tensor.to(dtype=target.dtype))
+                target.copy_(tensor.to(device=target.device, dtype=target.dtype))
                 missing.discard(tensor_name)
 
             for scale_key, target_name in scale_tensor_names.items():
@@ -602,7 +585,7 @@ def load_single_file_safetensors_into_module(module: nn.Module, checkpoint_path:
                     raise RuntimeError(
                         f"Shape mismatch for {target_name}: expected {list(target.shape)}, got {list(scale_tensor.shape)}."
                     )
-                target.copy_(scale_tensor.to(dtype=target.dtype))
+                target.copy_(scale_tensor.to(device=target.device, dtype=target.dtype))
 
     if missing:
         sample = ", ".join(sorted(list(missing))[:10])
@@ -636,8 +619,12 @@ class LoadedPRXPixelClip:
     cache_key: Any = None
 
 
-def _build_transformer_from_config(transformer_config: dict[str, Any], dtype: torch.dtype) -> PRXPixelTransformer2DModel:
-    return PRXPixelTransformer2DModel(
+def _build_transformer_from_config(
+    transformer_config: dict[str, Any],
+    dtype: torch.dtype,
+    device: torch.device | None = None,
+) -> PRXPixelTransformer2DModel:
+    transformer = PRXPixelTransformer2DModel(
         in_channels=transformer_config["in_channels"],
         patch_size=transformer_config["patch_size"],
         context_in_dim=transformer_config["context_in_dim"],
@@ -651,15 +638,22 @@ def _build_transformer_from_config(transformer_config: dict[str, Any], dtype: to
         time_max_period=transformer_config["time_max_period"],
         bottleneck_size=transformer_config["bottleneck_size"],
         resolution_embeds=transformer_config.get("resolution_embeds", True),
-    ).to(dtype=dtype)
+    )
+    if device is None:
+        return transformer.to(dtype=dtype)
+    return transformer.to(device=device, dtype=dtype)
 
 
-def load_prxpixel_model_from_repo(model_dir: str, dtype: torch.dtype) -> LoadedPRXPixelModel:
+def load_prxpixel_model_from_repo(
+    model_dir: str,
+    dtype: torch.dtype,
+    device: torch.device | None = None,
+) -> LoadedPRXPixelModel:
     model_index = _read_json(os.path.join(model_dir, "model_index.json"))
     transformer_config = _read_json(os.path.join(model_dir, "transformer", "config.json"))
     scheduler_config = _read_json(os.path.join(model_dir, "scheduler", "scheduler_config.json"))
 
-    transformer = _build_transformer_from_config(transformer_config, dtype=dtype)
+    transformer = _build_transformer_from_config(transformer_config, dtype=dtype, device=device)
     load_sharded_safetensors_into_module(
         transformer,
         os.path.join(model_dir, "transformer"),
@@ -684,13 +678,17 @@ def load_prxpixel_model_from_repo(model_dir: str, dtype: torch.dtype) -> LoadedP
     )
 
 
-def load_prxpixel_model_from_single_file(checkpoint_path: str, dtype: torch.dtype) -> LoadedPRXPixelModel:
+def load_prxpixel_model_from_single_file(
+    checkpoint_path: str,
+    dtype: torch.dtype,
+    device: torch.device | None = None,
+) -> LoadedPRXPixelModel:
     metadata = read_prxpixel_single_file_metadata(checkpoint_path)
     model_info = metadata["model_info"]
     transformer_config = metadata["transformer_config"]
     scheduler_config = metadata["scheduler_config"]
 
-    transformer = _build_transformer_from_config(transformer_config, dtype=dtype)
+    transformer = _build_transformer_from_config(transformer_config, dtype=dtype, device=device)
     fp8_weight_names = _enable_fp8_single_file_layers(transformer, checkpoint_path=checkpoint_path, compute_dtype=dtype)
     load_single_file_safetensors_into_module(transformer, checkpoint_path=checkpoint_path)
     transformer.eval()

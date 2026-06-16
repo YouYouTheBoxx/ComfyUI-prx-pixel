@@ -6,8 +6,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-from huggingface_hub import snapshot_download
 from safetensors import safe_open
+
+try:
+    from .hf_download import resolve_transformer_model_directory
+except Exception:  # pragma: no cover - standalone script execution
+    from hf_download import resolve_transformer_model_directory
 
 
 PRXPIXEL_SINGLE_FILE_FORMAT = "lumina_prx_pixel.transformer_single_file.v1"
@@ -60,24 +64,7 @@ def _read_json(path: str) -> dict[str, Any]:
 
 
 def resolve_model_directory(model_source: str, local_files_only: bool = False) -> str:
-    if os.path.isdir(model_source):
-        return model_source
-
-    allow_patterns = [
-        "model_index.json",
-        "scheduler/*",
-        "text_encoder/*",
-        "tokenizer/*",
-        "transformer/*",
-        "README.md",
-        "LICENSE",
-        "NOTICE",
-    ]
-    return snapshot_download(
-        repo_id=model_source,
-        allow_patterns=allow_patterns,
-        local_files_only=local_files_only,
-    )
+    return resolve_transformer_model_directory(model_source=model_source, local_files_only=local_files_only)
 
 
 def make_fp8_scale_key(tensor_name: str) -> str:
