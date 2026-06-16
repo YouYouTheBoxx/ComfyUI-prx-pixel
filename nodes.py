@@ -77,6 +77,24 @@ def _resolve_dtype(dtype_name: str, device: torch.device) -> torch.dtype:
     return torch.float32
 
 
+def _is_torch_oom_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return "out of memory" in message or "cuda out of memory" in message
+
+
+def _clear_memory_after_load_failure() -> None:
+    gc.collect()
+    try:
+        mm.soft_empty_cache()
+    except Exception:
+        pass
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
 def _normalize_cache_source(source: str) -> str:
     source = (source or "").strip()
     if not source:
@@ -266,11 +284,25 @@ def _get_or_load_repo_model(
             return cached
 
     model_dir = resolve_model_directory(model_source, local_files_only=local_files_only)
-    loaded_model = load_prxpixel_model_from_repo(
-        model_dir=model_dir,
-        dtype=resolved_dtype,
-        device=model_device,
-    )
+    storage_device = model_device
+    fallback_device = _offload_device_for(model_device, is_text_encoder=False)
+
+    try:
+        loaded_model = load_prxpixel_model_from_repo(
+            model_dir=model_dir,
+            dtype=resolved_dtype,
+            device=storage_device,
+        )
+    except RuntimeError as exc:
+        if model_device.type == "cpu" or fallback_device == storage_device or not _is_torch_oom_error(exc):
+            raise
+        _clear_memory_after_load_failure()
+        loaded_model = load_prxpixel_model_from_repo(
+            model_dir=model_dir,
+            dtype=resolved_dtype,
+            device=fallback_device,
+        )
+
     loaded_model.preferred_device = model_device
     loaded_model.cache_key = key
 
@@ -298,11 +330,25 @@ def _get_or_load_single_file_model(
             cached.cache_key = key
             return cached
 
-    loaded_model = load_prxpixel_model_from_single_file(
-        checkpoint_path=model_path,
-        dtype=resolved_dtype,
-        device=model_device,
-    )
+    storage_device = model_device
+    fallback_device = _offload_device_for(model_device, is_text_encoder=False)
+
+    try:
+        loaded_model = load_prxpixel_model_from_single_file(
+            checkpoint_path=model_path,
+            dtype=resolved_dtype,
+            device=storage_device,
+        )
+    except RuntimeError as exc:
+        if model_device.type == "cpu" or fallback_device == storage_device or not _is_torch_oom_error(exc):
+            raise
+        _clear_memory_after_load_failure()
+        loaded_model = load_prxpixel_model_from_single_file(
+            checkpoint_path=model_path,
+            dtype=resolved_dtype,
+            device=fallback_device,
+        )
+
     loaded_model.preferred_device = model_device
     loaded_model.cache_key = key
 
